@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gym Tracker</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#eef0f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#13171c" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{--bg:#eef0f2;--fg:#1c2530;--sub:#5d6a78;--card:#fff;--line:#d9dee3;--acc:#2d5bff;--accfg:#fff;--good:#1f8a4c;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#13171c;--fg:#e8ecf0;--sub:#96a3b0;--card:#1b2129;--line:#2b343e;--acc:#6f8fff;--accfg:#0d1320;--good:#4cc27f}}
+:root[data-theme="dark"]{--bg:#13171c;--fg:#e8ecf0;--sub:#96a3b0;--card:#1b2129;--line:#2b343e;--acc:#6f8fff;--accfg:#0d1320;--good:#4cc27f}
+*{box-sizing:border-box}
+html{height:100%;scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums}
+.wrap{max-width:560px;margin:0 auto;padding:16px 16px 40px}
+h1{font-size:1.4rem;margin:4px 0 12px}
+nav{display:flex;gap:6px;margin-bottom:16px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:4px;position:sticky;top:env(safe-area-inset-top,0px);z-index:2}
+nav button{flex:1;border:0;background:none;color:var(--sub);font:inherit;font-weight:600;padding:10px 0;border-radius:9px;min-height:44px}
+nav button.on{background:var(--acc);color:var(--accfg)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.row{display:flex;gap:8px}.row>*{flex:1;min-width:0}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px}
+.stat b{display:block;font-size:1.6rem;line-height:1.1}.stat span{color:var(--sub);font-size:.8rem}
+label{display:block;color:var(--sub);font-size:.85rem;margin:10px 0 4px}
+input,select,textarea{width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:11px;min-height:44px}
+textarea{min-height:110px;font-size:.8rem}
+.btn{width:100%;margin-top:12px;background:var(--acc);color:var(--accfg);border:0;border-radius:10px;font:inherit;font-weight:700;padding:13px;min-height:46px}
+.btn.alt{background:none;color:var(--fg);border:1px solid var(--line)}
+.big{font-size:2.6rem;font-weight:800;line-height:1}.big small{font-size:1rem;font-weight:600;color:var(--sub)}
+.sub{color:var(--sub);font-size:.9rem}
+.item{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-top:1px solid var(--line)}
+.item:first-child{border-top:0}
+.x{border:0;background:none;color:var(--sub);font-size:1.3rem;min-width:44px;min-height:44px}
+.empty{color:var(--sub);text-align:center;padding:18px 0}
+.scroll{overflow-x:auto}
+svg{display:block;width:100%;height:auto}
+.msg{color:var(--good);font-size:.85rem;margin-top:8px;min-height:1em}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>Gym Tracker</h1>
+<nav id="nav"></nav>
+<div id="view"></div>
+</div>
+<script>
+const KEY='gymtracker_v1';
+const PRESETS=['Bench Press','Squat','Deadlift','Overhead Press','Barbell Row','Pull-up','Lat Pulldown','Leg Press','Bicep Curl','Tricep Pushdown'];
+const TABS=[['log','Log'],['progress','Progress'],['body','Body'],['backup','Backup']];
+let state=load(),tab='log',pickEx=null,logDate=null,progEx=null;
+function load(){try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&Array.isArray(s.sets)&&Array.isArray(s.body))return s}catch(e){}return{sets:[],body:[]}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+const $=s=>document.querySelector(s);
+const fmt=d=>d.toLocaleDateString('en-CA');
+const today=()=>fmt(new Date());
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const short=d=>{const p=d.split('-');return new Date(+p[0],+p[1]-1,+p[2]).toLocaleDateString(undefined,{day:'numeric',month:'short'})};
+const num=v=>{const n=parseFloat(v);return isFinite(n)?n:NaN};
+
+function stats(){
+  const days=new Set(state.sets.map(s=>s.d));
+  const month=[...days].filter(d=>d.startsWith(today().slice(0,7))).length;
+  let streak=0,d=new Date();
+  if(!days.has(fmt(d)))d.setDate(d.getDate()-1);
+  while(days.has(fmt(d))){streak++;d.setDate(d.getDate()-1)}
+  return{month,streak,total:days.size};
+}
+function exList(){
+  const last={};state.sets.forEach(s=>{last[s.ex]=Math.max(last[s.ex]||0,s.t||0)});
+  return Object.keys(last).sort((a,b)=>last[b]-last[a]);
+}
+function chart(pts,unit){
+  if(!pts.length)return'';
+  const W=320,H=150,pl=34,pr=12,pt=14,pb=24;
+  const ys=pts.map(p=>p.y);let mn=Math.min(...ys),mx=Math.max(...ys);
+  if(mn===mx){mn-=1;mx+=1}const pad=(mx-mn)*.15;mn-=pad;mx+=pad;
+  const X=i=>pts.length===1?W/2:pl+i*(W-pl-pr)/(pts.length-1);
+  const Y=v=>pt+(H-pt-pb)*(1-(v-mn)/(mx-mn));
+  const line=pts.map((p,i)=>X(i)+','+Y(p.y)).join(' ');
+  const f=v=>Math.round(v*10)/10;
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Chart">
+  <line x1="${pl}" y1="${Y(mn+pad)}" x2="${W-pr}" y2="${Y(mn+pad)}" stroke="var(--line)"/>
+  <line x1="${pl}" y1="${Y(mx-pad)}" x2="${W-pr}" y2="${Y(mx-pad)}" stroke="var(--line)"/>
+  <text x="${pl-4}" y="${Y(mx-pad)+4}" text-anchor="end" font-size="10" fill="var(--sub)">${f(mx-pad)}</text>
+  <text x="${pl-4}" y="${Y(mn+pad)+4}" text-anchor="end" font-size="10" fill="var(--sub)">${f(mn+pad)}</text>
+  ${pts.length>1?`<polyline points="${line}" fill="none" stroke="var(--acc)" stroke-width="2.5" stroke-linejoin="round"/>`:''}
+  ${pts.map((p,i)=>`<circle cx="${X(i)}" cy="${Y(p.y)}" r="3.5" fill="var(--acc)"/>`).join('')}
+  <text x="${X(0)}" y="${H-6}" text-anchor="${pts.length===1?'middle':'start'}" font-size="10" fill="var(--sub)">${short(pts[0].x)}</text>
+  ${pts.length>1?`<text x="${X(pts.length-1)}" y="${H-6}" text-anchor="end" font-size="10" fill="var(--sub)">${short(pts[pts.length-1].x)}</text>`:''}
+  </svg>`;
+}
+
+function render(){
+  $('#nav').innerHTML=TABS.map(t=>`<button class="${t[0]===tab?'on':''}" data-t="${t[0]}">${t[1]}</button>`).join('');
+  $('#nav').querySelectorAll('button').forEach(b=>b.onclick=()=>{tab=b.dataset.t;render()});
+  ({log:viewLog,progress:viewProgress,body:viewBody,backup:viewBackup})[tab]();
+}
+
+/* ---------- Log ---------- */
+function viewLog(){
+  const recent=exList();
+  const all=[...new Set([...PRESETS,...recent])];
+  if(!pickEx)pickEx=recent[0]||PRESETS[0];
+  if(!logDate)logDate=today();
+  $('#view').innerHTML=`<div class="stats" id="stats"></div>
+  <div class="card">
+    <label for="d">Date</label><input id="d" type="date" value="${logDate}">
+    <label for="ex">Exercise</label>
+    <select id="ex">${all.map(e=>`<option ${e===pickEx?'selected':''}>${esc(e)}</option>`).join('')}<option value="__new">Add your own exercise</option></select>
+    <input id="newex" placeholder="Exercise name" style="display:none;margin-top:8px">
+    <div class="row"><div><label for="w">Weight (kg)</label><input id="w" type="number" inputmode="decimal" step="0.5" min="0"></div>
+    <div><label for="r">Reps</label><input id="r" type="number" inputmode="numeric" step="1" min="1"></div></div>
+    <button class="btn" id="add">Add set</button><div class="msg" id="msg"></div>
+  </div>
+  <div id="list"></div>`;
+  $('#d').onchange=e=>{logDate=e.target.value||today();paintLog()};
+  $('#ex').onchange=e=>{const n=e.target.value==='__new';$('#newex').style.display=n?'block':'none';if(!n){pickEx=e.target.value;prefill()}};
+  $('#add').onclick=addSet;
+  prefill();paintLog();
+}
+function prefill(){
+  const l=state.sets.filter(s=>s.ex===pickEx).sort((a,b)=>b.t-a.t)[0];
+  if(l){$('#w').value=l.w;$('#r').value=l.r}else{$('#w').value='';$('#r').value=''}
+}
+function addSet(){
+  let ex=$('#ex').value;
+  if(ex==='__new')ex=$('#newex').value.trim();
+  const w=num($('#w').value),r=parseInt($('#r').value,10);
+  const msg=$('#msg');
+  if(!ex){msg.style.color='var(--sub)';msg.textContent='Enter an exercise name.';return}
+  if(isNaN(w)||w<0||!(r>0)){msg.style.color='var(--sub)';msg.textContent='Enter the weight and reps for this set.';return}
+  const prevBest=Math.max(0,...state.sets.filter(s=>s.ex===ex).map(s=>s.w));
+  state.sets.push({id:uid(),d:logDate,ex,w,r,t:Date.now()});
+  save();pickEx=ex;
+  msg.style.color='var(--good)';
+  msg.textContent=w>prevBest&&prevBest>0?'Set added. New personal best!':'Set added.';
+  const known=[...$('#ex').options].some(o=>o.value===ex);
+  if(!known){viewLog();$('#msg').style.color='var(--good)';$('#msg').textContent='Set added.';return}
+  paintLog();
+}
+function paintLog(){
+  const s=stats();
+  $('#stats').innerHTML=`<div class="stat"><b>${s.month}</b><span>days this month</span></div><div class="stat"><b>${s.streak}</b><span>day streak</span></div><div class="stat"><b>${s.total}</b><span>days trained</span></div>`;
+  const day=state.sets.filter(x=>x.d===logDate);
+  if(!day.length){$('#list').innerHTML=`<div class="card empty">No sets logged for ${short(logDate)} yet.</div>`;return}
+  const groups={};day.forEach(x=>{(groups[x.ex]=groups[x.ex]||[]).push(x)});
+  $('#list').innerHTML=Object.keys(groups).map(ex=>`<div class="card"><b>${esc(ex)}</b>${groups[ex].sort((a,b)=>a.t-b.t).map((x,i)=>`<div class="item"><span>Set ${i+1}: ${x.w} kg × ${x.r}</span><button class="x" data-id="${x.id}" aria-label="Delete set">×</button></div>`).join('')}</div>`).join('');
+  $('#list').querySelectorAll('.x').forEach(b=>b.onclick=()=>{state.sets=state.sets.filter(s=>s.id!==b.dataset.id);save();paintLog()});
+}
+
+/* ---------- Progress ---------- */
+function viewProgress(){
+  const ex=exList();
+  if(!ex.length){$('#view').innerHTML='<div class="card empty">Log your first set to see progress here.</div>';return}
+  if(!progEx||!ex.includes(progEx))progEx=ex[0];
+  $('#view').innerHTML=`<div class="card"><label for="pe" style="margin-top:0">Exercise</label><select id="pe">${ex.map(e=>`<option ${e===progEx?'selected':''}>${esc(e)}</option>`).join('')}</select></div><div id="pv"></div>`;
+  $('#pe').onchange=e=>{progEx=e.target.value;paintProg()};
+  paintProg();
+}
+function paintProg(){
+  const sets=state.sets.filter(s=>s.ex===progEx);
+  const by={};sets.forEach(s=>{(by[s.d]=by[s.d]||[]).push(s)});
+  const days=Object.keys(by).sort();
+  const top=days.map(d=>{const b=by[d].reduce((a,c)=>c.w>a.w||(c.w===a.w&&c.r>a.r)?c:a);return{d,w:b.w,r:b.r,vol:by[d].reduce((a,c)=>a+c.w*c.r,0),n:by[d].length}});
+  const pr=sets.reduce((a,c)=>c.w>a.w||(c.w===a.w&&c.r>a.r)?c:a);
+  const e1=Math.max(...sets.map(s=>s.w*(1+s.r/30)));
+  const first=top[0].w,last=top[top.length-1].w,diff=Math.round((last-first)*10)/10;
+  $('#pv').innerHTML=`<div class="card"><div class="sub">Personal best</div><div class="big">${pr.w}<small> kg × ${pr.r}</small></div>
+  <div class="sub" style="margin-top:8px">Estimated 1-rep max: ${Math.round(e1*10)/10} kg${days.length>1?` · Top set change: ${diff>=0?'+':''}${diff} kg`:''}</div></div>
+  <div class="card"><div class="sub" style="margin-bottom:6px">Top set weight per session (kg)</div>${chart(top.map(t=>({x:t.d,y:t.w})))}${days.length<2?'<div class="sub">Log this exercise on 2 or more days to see a trend line.</div>':''}</div>
+  <div class="card"><b>Recent sessions</b>${top.slice(-6).reverse().map(t=>`<div class="item"><span>${short(t.d)}</span><span>${t.w} kg × ${t.r} · ${t.n} sets · ${Math.round(t.vol)} kg total</span></div>`).join('')}</div>`;
+}
+
+/* ---------- Body ---------- */
+function viewBody(){
+  $('#view').innerHTML=`<div class="card"><label for="bw" style="margin-top:0">Body weight today (kg)</label><input id="bw" type="number" inputmode="decimal" step="0.1" min="0"><button class="btn" id="badd">Save weight</button><div class="msg" id="bmsg"></div></div><div id="bv"></div>`;
+  $('#badd').onclick=()=>{
+    const v=num($('#bw').value);
+    if(isNaN(v)||v<=0){$('#bmsg').style.color='var(--sub)';$('#bmsg').textContent='Enter your weight in kg.';return}
+    state.body=state.body.filter(b=>b.d!==today());state.body.push({d:today(),kg:v});save();paintBody();
+    $('#bw').value='';$('#bmsg').style.color='var(--good)';$('#bmsg').textContent='Weight saved.';
+  };
+  paintBody();
+}
+function paintBody(){
+  const b=[...state.body].sort((a,c)=>a.d.localeCompare(c.d));
+  if(!b.length){$('#bv').innerHTML='<div class="card empty">No body weight logged yet.</div>';return}
+  const l=b[b.length-1],f=b[0],diff=Math.round((l.kg-f.kg)*10)/10;
+  $('#bv').innerHTML=`<div class="card"><div class="sub">Latest (${short(l.d)})</div><div class="big">${l.kg}<small> kg</small></div>${b.length>1?`<div class="sub" style="margin-top:8px">${diff>=0?'+':''}${diff} kg since ${short(f.d)}</div>`:''}</div>
+  <div class="card"><div class="sub" style="margin-bottom:6px">Body weight trend (kg)</div>${chart(b.map(x=>({x:x.d,y:x.kg})))}</div>
+  <div class="card"><b>Recent entries</b>${b.slice(-5).reverse().map(x=>`<div class="item"><span>${short(x.d)}: ${x.kg} kg</span><button class="x" data-d="${x.d}" aria-label="Delete entry">×</button></div>`).join('')}</div>`;
+  $('#bv').querySelectorAll('.x').forEach(x=>x.onclick=()=>{state.body=state.body.filter(e=>e.d!==x.dataset.d);save();paintBody()});
+}
+
+/* ---------- Backup ---------- */
+function viewBackup(){
+  $('#view').innerHTML=`<div class="card"><b>Back up your data</b><div class="sub" style="margin-top:6px">Your data lives in this browser only. Copy it somewhere safe (notes app or email to yourself) so you can restore it if you clear browser data or change phones.</div>
+  <label for="out">Your data</label><textarea id="out" readonly></textarea><button class="btn" id="copy">Copy data</button><div class="msg" id="cmsg"></div></div>
+  <div class="card"><b>Restore from a backup</b><div class="sub" style="margin-top:6px">Pasting a backup replaces everything currently saved.</div>
+  <label for="in">Paste backup here</label><textarea id="in"></textarea><button class="btn alt" id="imp">Restore data</button><div class="msg" id="imsg"></div></div>`;
+  const out=$('#out');out.value=JSON.stringify(state);
+  $('#copy').onclick=async()=>{
+    try{await navigator.clipboard.writeText(out.value);$('#cmsg').style.color='var(--good)';$('#cmsg').textContent='Copied.'}
+    catch(e){out.select();$('#cmsg').style.color='var(--sub)';$('#cmsg').textContent='Text selected. Use your phone\'s copy option.'}
+  };
+  $('#imp').onclick=()=>{
+    try{
+      const s=JSON.parse($('#in').value);
+      if(!s||!Array.isArray(s.sets)||!Array.isArray(s.body))throw 0;
+      state={sets:s.sets.filter(x=>x&&x.d&&x.ex&&isFinite(x.w)&&isFinite(x.r)).map(x=>({id:x.id||uid(),d:String(x.d),ex:String(x.ex),w:+x.w,r:+x.r,t:x.t||0})),body:s.body.filter(x=>x&&x.d&&isFinite(x.kg)).map(x=>({d:String(x.d),kg:+x.kg}))};
+      save();$('#imsg').style.color='var(--good)';$('#imsg').textContent='Data restored.';out.value=JSON.stringify(state);
+    }catch(e){$('#imsg').style.color='var(--sub)';$('#imsg').textContent='That doesn\'t look like a valid backup. Paste the full text you copied.'}
+  };
+}
+render();
+try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
+if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{})})}
+</script>
+</body>
+</html>
